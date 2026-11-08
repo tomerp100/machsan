@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>מחסן</title>
-  <meta name="description" content="ניהול מלאי למחסן מסעדה בסריקה מהטלפון">
+  <meta name="description" content="ניהול מלאי למחסן מסעדה בצילום מהטלפון">
   <meta name="theme-color" content="#0f766e">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -25,7 +25,7 @@
 
   <nav class="tabs" id="tabs">
     <button data-tab="inventory" class="active"><span class="ic">📦</span><span>מלאי</span></button>
-    <button data-tab="scan"><span class="ic">📷</span><span>סריקה</span></button>
+    <button data-tab="scan"><span class="ic">📷</span><span>צילום</span></button>
     <button data-tab="count"><span class="ic">🔢</span><span>ספירה</span></button>
     <button data-tab="low"><span class="ic">⚠️</span><span>חסרים</span><b class="badge" id="lowBadge" hidden></b></button>
     <button data-tab="settings"><span class="ic">⚙️</span><span>הגדרות</span></button>
@@ -35,7 +35,6 @@
   <section class="sheet" id="sheet" hidden></section>
   <div class="toast" id="toast" hidden></div>
 
-  <script src="vendor/html5-qrcode.min.js"></script>
   <script src="vendor/xlsx.full.min.js" defer></script>
   <script src="app.js"></script>
 </body>

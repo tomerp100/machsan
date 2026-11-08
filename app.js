@@ -62,17 +62,6 @@ function toast(msg, ms = 2200) {
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), ms);
 }
 
-let audioCtx;
-function beep(ok = true) {
-  try {
-    navigator.vibrate?.(ok ? 60 : [80, 60, 80]);
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.frequency.value = ok ? 1200 : 300; g.gain.value = 0.08;
-    o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.12);
-  } catch { /* no sound */ }
-}
-
 /* ================= Mutations ================= */
 function addMove(p, type, delta, note = '') {
   p.qty = Math.max(0, p.qty + delta);
@@ -100,12 +89,11 @@ $('#backdrop').addEventListener('click', closeSheet);
 
 /* ================= Navigation ================= */
 let tab = 'inventory';
-const TITLES = { inventory: 'מלאי', scan: 'סריקה', count: 'ספירת מלאי', low: 'חסרים במלאי', settings: 'הגדרות' };
+const TITLES = { inventory: 'מלאי', scan: 'צילום מחסן', count: 'ספירת מלאי', low: 'חסרים במלאי', settings: 'הגדרות' };
 $('#tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-tab]'); if (b) go(b.dataset.tab);
 });
 function go(t) {
-  if (tab === 'scan' && t !== 'scan') stopScanner();
   tab = t;
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   $('#title').textContent = TITLES[t];
@@ -132,7 +120,7 @@ function renderInventory() {
   if (!S.products.length) {
     v.innerHTML = `<div class="empty"><div class="big">📦</div><p>עדיין אין מוצרים.</p>
       <div class="stack"><button class="btn primary block" id="e1">הוסף מוצר ראשון</button>
-      <button class="btn block" id="e2">סרוק ברקוד להוספה</button>
+      <button class="btn block" id="e2">📷 צלם מדף, והמוצרים יתווספו לבד</button>
       <button class="btn block" id="e3">טען מוצרים לדוגמה (מסעדה)</button></div></div>`;
     $('#e1').onclick = () => productForm();
     $('#e2').onclick = () => go('scan');
@@ -180,7 +168,6 @@ function productSheet(id) {
       ${p.perPack > 1 ? `<div class="row small"><span class="grow muted">סה״כ יחידות</span><span>${p.qty} ${esc(p.unit)}</span></div>
       <div class="row small"><span class="grow muted">אריזה</span><span>${esc(p.pack)} = ${p.perPack} ${esc(p.unit)}</span></div>` : ''}
       <div class="row small"><span class="grow muted">מינימום</span><span>${p.min || '—'}</span></div>
-      ${p.barcode ? `<div class="row small"><span class="grow muted">ברקוד</span><span dir="ltr">${esc(p.barcode)}</span></div>` : ''}
     </div>
     <div class="grid2" style="margin-top:12px">
       <button class="btn in" id="bIn">＋ קליטה</button>
@@ -268,7 +255,6 @@ function productForm(p = null, presetBarcode = '', onDone) {
       <label class="field"><span>שם המוצר *</span><input type="text" name="name" required value="${esc(p.name)}" placeholder="לדוגמה: קולה זכוכית 330"></label>
       <label class="field"><span>קטגוריה</span><input type="text" name="category" list="catlist" value="${esc(p.category)}" placeholder="שתייה / חד״פ / ניקיון…">
         <datalist id="catlist">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label>
-      <label class="field"><span>ברקוד</span><div class="row"><input class="grow" type="text" name="barcode" dir="ltr" inputmode="numeric" value="${esc(p.barcode)}"><button type="button" class="btn small" id="scanBc">📷</button></div></label>
       <div class="grid2">
         <label class="field"><span>שם יחידה</span><input type="text" name="unit" value="${esc(p.unit)}" placeholder="בקבוק / חבילה"></label>
         <label class="field"><span>שם אריזה</span><input type="text" name="pack" value="${esc(p.pack)}" placeholder="ארגז / קרטון"></label>
@@ -281,13 +267,10 @@ function productForm(p = null, presetBarcode = '', onDone) {
       <p class="muted small">טיפ: אם בארגז סגור יש 24 בקבוקים, כתוב 24 ב"יחידות באריזה". המינימום נספר ביחידות.</p>
       <button class="btn primary block" type="submit">שמירה</button>
     </form>`, onDone);
-  $('#scanBc', sh).onclick = () => quickScan((code) => { $('[name=barcode]', sh).value = code; });
   $('#pf', sh).onsubmit = (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    const barcode = String(f.get('barcode') || '').trim();
-    const clash = barcode && S.products.find(x => x.barcode === barcode && x.id !== p.id);
-    if (clash) return toast(`הברקוד כבר שייך ל"${clash.name}"`);
+    const barcode = p.barcode || '';
     const data = {
       name: String(f.get('name')).trim(), category: String(f.get('category') || '').trim(), barcode,
       unit: String(f.get('unit') || '').trim() || 'יחידה', pack: String(f.get('pack') || '').trim() || 'ארגז',
@@ -306,110 +289,281 @@ function productForm(p = null, presetBarcode = '', onDone) {
   };
 }
 
-/* ================= Scanner ================= */
-let scanner = null, scanMode = 'in', scanBusy = false;
-async function startScanner(elId, onCode) {
-  await stopScanner();
-  if (!window.Html5Qrcode) { toast('רכיב הסריקה לא נטען'); return; }
-  scanner = new Html5Qrcode(elId, { verbose: false });
-  try {
-    await scanner.start({ facingMode: 'environment' },
-      { fps: 10, qrbox: (w, h) => ({ width: Math.min(w * 0.85, 360), height: Math.min(h * 0.45, 200) }) },
-      (text) => onCode(text), () => {});
-  } catch (e) {
-    console.warn(e);
-    const el = document.getElementById(elId);
-    if (el) el.innerHTML = `<div class="empty" style="color:#fff">אין גישה למצלמה.<br><small>צריך לאשר הרשאת מצלמה, והאתר חייב לרוץ ב-HTTPS.</small></div>`;
-    scanner = null;
+/* ================= Shelf photos → inventory (Claude vision) ================= */
+// A session holds the photos taken in this round and what Claude found in each one.
+// Each photo should show a different shelf section; results from all photos are summed per product.
+let shelf = { photos: [] }; // {id, thumb, status:'busy'|'done'|'error', error, items:[...], note}
+
+const SHELF_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          existing_id: { type: 'string', description: 'id from the existing product list if this is the same product, otherwise empty string' },
+          name_he: { type: 'string', description: 'Short product name in Hebrew (brand + type + size if visible)' },
+          category_he: { type: 'string', description: 'Category in Hebrew, e.g. שתייה, חד״פ, ניקיון, יבשים, שימורים' },
+          unit_he: { type: 'string', description: 'Name of a single unit in Hebrew, e.g. בקבוק, פחית, חבילה, גליל' },
+          pack_he: { type: 'string', description: 'Name of the closed pack in Hebrew, e.g. ארגז, שישייה, קרטון. Empty if none visible' },
+          units_per_pack: { type: 'integer', description: 'Units inside one closed pack if known or printed, else 0' },
+          closed_packs: { type: 'integer', description: 'Number of closed/sealed packs of this product' },
+          loose_units: { type: 'integer', description: 'Number of individual units NOT inside closed packs' },
+          confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+          note_he: { type: 'string', description: 'Short Hebrew note if something is hidden, stacked or uncertain; else empty' },
+        },
+        required: ['existing_id', 'name_he', 'category_he', 'unit_he', 'pack_he', 'units_per_pack', 'closed_packs', 'loose_units', 'confidence', 'note_he'],
+        additionalProperties: false,
+      },
+    },
+    photo_note_he: { type: 'string', description: 'One short Hebrew sentence about the photo quality / what could not be counted' },
+  },
+  required: ['items', 'photo_note_he'],
+  additionalProperties: false,
+};
+
+async function analyzeShelf(img) {
+  const client = await getClient();
+  const known = S.products.map(p => ({ id: p.id, name: p.name, unit: p.unit, pack: p.pack, units_per_pack: p.perPack }));
+  const prompt = `This is a photo of one shelf section in a restaurant storeroom. Build a stock count from it.
+
+Identify every distinct product you can see (drinks, disposables like napkins/straws/wipes/cups, cleaning supplies, dry goods, etc.) and count each one.
+- Count closed/sealed packs (cases, six-packs, cartons, shrink-wrapped bundles) as closed_packs and do NOT add their contents to loose_units.
+- Count individual items outside closed packs as loose_units. Count carefully, row by row and layer by layer.
+- If items are hidden behind or under others, count what you can reasonably infer from the visible arrangement (e.g. a full row going back) and explain in note_he; lower the confidence.
+- Read labels to tell products apart (brand, flavour, size). Different sizes/flavours are different products.
+- Do not list shelves, walls, or non-stock objects.
+
+Existing products in this storeroom (reuse the exact id when it is the same product, so counts line up):
+${known.length ? JSON.stringify(known) : '(none yet - use empty existing_id for everything)'}
+
+All names and notes must be in Hebrew.`;
+  const resp = await client.beta.messages.create({
+    model: 'claude-opus-5-5',
+    max_tokens: 16000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'high', format: { type: 'json_schema', schema: SHELF_SCHEMA } },
+    messages: [{ role: 'user', content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: img.b64 } },
+      { type: 'text', text: prompt },
+    ] }],
+  });
+  if (resp.stop_reason === 'refusal') throw new Error('REFUSAL');
+  if (resp.stop_reason === 'max_tokens') throw new Error('TOO_MANY');
+  const r = JSON.parse(resp.content.find(b => b.type === 'text')?.text || '{}');
+  const items = (r.items || []).map(it => ({
+    ...it,
+    existing_id: byId(it.existing_id) ? it.existing_id : '',
+    closed_packs: Math.max(0, it.closed_packs | 0),
+    loose_units: Math.max(0, it.loose_units | 0),
+    units_per_pack: Math.max(0, it.units_per_pack | 0),
+  })).filter(it => it.closed_packs + it.loose_units > 0);
+  return { items, note: r.photo_note_he || '' };
+}
+
+function errText(err) {
+  return err.message === 'NO_KEY' ? 'צריך מפתח API (למטה)'
+    : err.message === 'REFUSAL' ? 'הבקשה נדחתה, נסה תמונה אחרת'
+    : err.message === 'TOO_MANY' ? 'יותר מדי מוצרים בתמונה אחת. צלם חלק קטן יותר של המדף'
+    : err.status === 401 ? 'מפתח ה-API לא תקין'
+    : err.status === 429 ? 'יותר מדי בקשות, נסה שוב בעוד דקה'
+    : !navigator.onLine ? 'אין אינטרנט'
+    : 'שגיאה: ' + (err.message || err);
+}
+
+async function addShelfPhotos(files) {
+  for (const file of files) {
+    const ph = { id: uid(), thumb: '', status: 'busy', items: [], note: '' };
+    shelf.photos.push(ph);
+    let img;
+    try {
+      img = await resizeToJpeg(file);
+      ph.thumb = await thumbOf(img.dataUrl);
+    } catch { ph.status = 'error'; ph.error = 'לא הצלחתי לקרוא את התמונה'; continue; }
+    drawShelf();
+    analyzeShelf(img).then(r => { ph.items = r.items; ph.note = r.note; ph.status = 'done'; })
+      .catch(err => { console.warn(err); ph.status = 'error'; ph.error = errText(err); })
+      .finally(() => { if (tab === 'scan') drawShelf(); });
   }
+  drawShelf();
 }
-async function stopScanner() {
-  if (!scanner) return;
-  const s = scanner; scanner = null;
-  try { if (s.isScanning) await s.stop(); s.clear(); } catch { /* ignore */ }
+function thumbOf(dataUrl) {
+  return new Promise(res => {
+    const im = new Image();
+    im.onload = () => {
+      const s = 160 / Math.max(im.width, im.height), c = document.createElement('canvas');
+      c.width = im.width * s; c.height = im.height * s;
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      res(c.toDataURL('image/jpeg', 0.7));
+    };
+    im.src = dataUrl;
+  });
 }
+
+// Sum results across photos, one row per product.
+let shelfRows = []; // {key, pid, name, category, unit, pack, perPack, packs, units, include, conf, notes:[]}
+function buildRows() {
+  const prev = new Map(shelfRows.map(r => [r.key, r]));
+  const map = new Map();
+  shelf.photos.filter(p => p.status === 'done').forEach(ph => ph.items.forEach(it => {
+    const key = it.existing_id || 'new:' + it.name_he.trim();
+    let r = map.get(key);
+    if (!r) {
+      const p = byId(it.existing_id);
+      r = { key, pid: it.existing_id, name: p ? p.name : it.name_he.trim(), category: p ? p.category : it.category_he,
+        unit: p ? p.unit : (it.unit_he || 'יחידה'), pack: p ? p.pack : (it.pack_he || 'ארגז'),
+        perPack: p ? p.perPack : Math.max(1, it.units_per_pack || 1), packs: 0, units: 0, include: true, conf: 'high', notes: [] };
+      map.set(key, r);
+    }
+    r.packs += it.closed_packs; r.units += it.loose_units;
+    if (it.confidence === 'low' || (it.confidence === 'medium' && r.conf === 'high')) r.conf = it.confidence;
+    if (it.note_he) r.notes.push(it.note_he);
+  }));
+  // keep the user's edits for rows that are still there
+  shelfRows = [...map.values()].map(r => {
+    const o = prev.get(r.key);
+    return o && o.edited ? { ...r, packs: o.packs, units: o.units, include: o.include, name: o.name, pid: o.pid, perPack: o.perPack, edited: true } : r;
+  });
+}
+const rowTotal = (r) => r.packs * Math.max(1, r.perPack) + r.units;
 
 function renderScan() {
   const v = $('#view');
+  const hasKey = !!S.settings.apiKey?.trim();
   v.innerHTML = `
-    <div class="seg" id="modes">
-      <button data-mode="in">＋ קליטה</button>
-      <button data-mode="out">－ הוצאה</button>
-      <button data-mode="count">🔢 ספירה</button>
+    ${hasKey ? '' : keySetupHtml()}
+    <div class="card stack">
+      <b>📷 צלם את המחסן, והאפליקציה תספור לבד</b>
+      <p class="small muted">צלם כל מדף (או חלק ממדף) בתמונה נפרדת. ה-AI מזהה את המוצרים וסופר ארגזים סגורים ויחידות. בסוף אתה בודק ומאשר.</p>
+      <input type="file" accept="image/*" capture="environment" id="shCam" hidden>
+      <input type="file" accept="image/*" multiple id="shGal" hidden>
+      <button class="btn primary block" id="shTake" style="min-height:60px;font-size:18px" ${hasKey ? '' : 'disabled'}>📷 צלם מדף</button>
+      <button class="btn block" id="shPick" ${hasKey ? '' : 'disabled'}>🖼️ בחר תמונות מהגלריה</button>
+      <details class="small muted"><summary>טיפים לספירה מדויקת</summary>
+        <ul style="margin:6px 0;padding-inline-start:18px">
+          <li>אור טוב, מצלמים ישר מול המדף ולא בזווית.</li>
+          <li>מדף אחד בכל תמונה. לא לצלם את אותו מקום פעמיים, אחרת הוא ייספר פעמיים.</li>
+          <li>אם יש מוצרים מאחור שלא רואים, הוצא שורה קדימה או צלם מלמעלה.</li>
+          <li>שיהיה אפשר לקרוא את התוויות, כדי שהמוצרים יזוהו נכון.</li>
+        </ul></details>
     </div>
-    <p class="muted small center" id="modeHint"></p>
-    <div id="reader"></div>
-    <div class="row" style="margin-top:12px">
-      <input class="grow" type="text" id="manual" dir="ltr" inputmode="numeric" placeholder="הקלדת ברקוד ידנית">
-      <button class="btn" id="manualGo">חפש</button>
-    </div>
-    <button class="btn block" id="pick" style="margin-top:8px">בחירת מוצר מהרשימה (בלי ברקוד)</button>`;
-  const HINT = { in: 'סרוק מוצר כדי להוסיף למלאי', out: 'סרוק מוצר כדי להוריד מהמלאי', count: 'סרוק מוצר ורשום כמה ספרת על המדף' };
-  const setMode = (m) => {
-    scanMode = m;
-    document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
-    $('#modeHint').textContent = HINT[m];
-  };
-  setMode(scanMode);
-  $('#modes').onclick = (e) => { const b = e.target.closest('[data-mode]'); if (b) setMode(b.dataset.mode); };
-  $('#manualGo').onclick = () => { const c = $('#manual').value.trim(); if (c) handleCode(c); };
-  $('#manual').onkeydown = (e) => { if (e.key === 'Enter') $('#manualGo').click(); };
-  $('#pick').onclick = () => pickProduct((p) => qtySheet(p, scanMode, resumeScan));
-  scanBusy = false;
-  startScanner('reader', handleCode);
-}
-function resumeScan() { setTimeout(() => { scanBusy = false; }, 600); }
-function handleCode(code) {
-  if (scanBusy) return;
-  scanBusy = true;
-  const p = byBarcode(code);
-  if (p) { beep(true); qtySheet(p, scanMode, resumeScan); }
-  else {
-    beep(false);
-    const sh = openSheet(`
-      <h2>ברקוד לא מוכר</h2>
-      <p class="muted" dir="ltr" style="text-align:right">${esc(code)}</p>
-      <div class="stack">
-        <button class="btn primary block" id="nNew">צור מוצר חדש עם הברקוד</button>
-        <button class="btn block" id="nLink">שייך למוצר קיים</button>
-        <button class="btn block" id="nCancel">ביטול</button>
-      </div>`, resumeScan);
-    $('#nNew', sh).onclick = () => productForm(null, code, resumeScan);
-    $('#nLink', sh).onclick = () => pickProduct((pp) => {
-      pp.barcode = String(code).trim(); saveState(); toast(`הברקוד שויך ל"${pp.name}"`);
-      qtySheet(pp, scanMode, resumeScan);
-    }, resumeScan);
-    $('#nCancel', sh).onclick = closeSheet;
-  }
+    <div id="shPhotos"></div>
+    <div id="shRows"></div>`;
+  if (!hasKey) bindKeySetup(renderScan);
+  $('#shTake').onclick = () => $('#shCam').click();
+  $('#shPick').onclick = () => $('#shGal').click();
+  const onFiles = (e) => { const fs = [...(e.target.files || [])]; e.target.value = ''; if (fs.length) addShelfPhotos(fs); };
+  $('#shCam').onchange = onFiles; $('#shGal').onchange = onFiles;
+  drawShelf();
 }
 
-function pickProduct(onPick, onCancel) {
-  const sh = openSheet(`
-    <h2>בחירת מוצר</h2>
-    <input type="search" id="pq" placeholder="חיפוש…">
-    <div class="list" id="pl" style="margin-top:10px"></div>`, onCancel);
-  const draw = () => {
-    const q = $('#pq', sh).value.trim().toLowerCase();
-    const items = S.products.filter(p => !q || p.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, 'he'));
-    $('#pl', sh).innerHTML = items.map(itemHtml).join('') || '<p class="muted center">אין מוצרים</p>';
+function drawShelf() {
+  const pe = $('#shPhotos'), re = $('#shRows'); if (!pe || !re) return;
+  if (!shelf.photos.length) { pe.innerHTML = ''; re.innerHTML = ''; return; }
+  const busy = shelf.photos.filter(p => p.status === 'busy').length;
+  pe.innerHTML = `<h2>תמונות (${shelf.photos.length})${busy ? ` · סופר ${busy}… ⏳` : ''}</h2>
+    <div class="photos">${shelf.photos.map(ph => `
+      <div class="ph ${ph.status}">
+        ${ph.thumb ? `<img src="${ph.thumb}" alt="">` : '<div class="noimg"></div>'}
+        <div class="phs">${ph.status === 'busy' ? '⏳ סופר…' : ph.status === 'error' ? `⚠️ ${esc(ph.error)}` : `✓ ${ph.items.length} מוצרים`}</div>
+        <button class="phx" data-rm="${ph.id}" aria-label="הסר">✕</button>
+      </div>`).join('')}</div>
+    ${shelf.photos.filter(p => p.note && p.status === 'done').map(p => `<p class="small muted">• ${esc(p.note)}</p>`).join('')}`;
+  pe.onclick = (e) => {
+    const b = e.target.closest('[data-rm]'); if (!b) return;
+    shelf.photos = shelf.photos.filter(p => p.id !== b.dataset.rm); drawShelf();
   };
-  $('#pq', sh).oninput = draw; draw();
-  $('#pl', sh).onclick = (e) => {
-    const it = e.target.closest('[data-id]'); if (!it) return;
-    const p = byId(it.dataset.id);
-    onSheetClose = null; // switching sheets, not cancelling
-    onPick(p);
+  buildRows();
+  if (!shelfRows.length) { re.innerHTML = busy ? '' : '<p class="muted center">לא זוהו מוצרים עדיין</p>'; return; }
+  const opts = (sel) => `<option value="">➕ מוצר חדש</option>` + S.products.slice().sort((a, b) => a.name.localeCompare(b.name, 'he'))
+    .map(p => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  re.innerHTML = `<h2>מה נמצא (${shelfRows.length} מוצרים)</h2>
+    <p class="small muted">בדוק ותקן אם צריך. "קיים במערכת" אומר שהמוצר כבר מוכר והכמות שלו תתעדכן. מוצרים חדשים ייווצרו.</p>
+    <div class="list">${shelfRows.map((r, i) => {
+      const p = byId(r.pid), t = rowTotal(r);
+      return `<div class="countrow ${r.include ? 'done' : ''}" data-i="${i}">
+        <div class="row"><input type="checkbox" data-f="include" ${r.include ? 'checked' : ''} style="width:22px;height:22px">
+          <input class="grow" type="text" data-f="name" value="${esc(r.name)}" ${p ? 'readonly' : ''} style="min-height:40px;font-weight:600"></div>
+        <div class="row small" style="margin-top:6px"><select data-f="pid" style="min-height:38px">${opts(r.pid)}</select></div>
+        <div class="inputs" style="grid-template-columns:1fr 1fr 1fr">
+          <label><span>${esc(r.pack)} סגור</span><input type="number" inputmode="numeric" min="0" data-f="packs" value="${r.packs}"></label>
+          <label><span>${esc(r.unit)} בודדים</span><input type="number" inputmode="numeric" min="0" data-f="units" value="${r.units}"></label>
+          <label><span>ב${esc(r.pack)}</span><input type="number" inputmode="numeric" min="1" data-f="perPack" value="${r.perPack}"></label>
+        </div>
+        <div class="small" style="margin-top:6px">סה״כ <b>${t}</b> ${esc(r.unit)}${p ? ` · במערכת ${p.qty} · הפרש <span class="${t - p.qty > 0 ? 'diff-pos' : t - p.qty < 0 ? 'diff-neg' : ''}">${signed(t - p.qty)}</span>` : ' · <span class="tag" style="background:var(--accent);color:var(--accent-text)">חדש</span>'}
+          ${r.conf !== 'high' ? ` · <span class="diff-neg">ודאות ${r.conf === 'low' ? 'נמוכה' : 'בינונית'}</span>` : ''}</div>
+        ${r.notes.length ? `<div class="small muted">${esc(r.notes.join(' · '))}</div>` : ''}
+      </div>`;
+    }).join('')}</div>
+    <div class="notice" style="margin-top:12px">המלאי של המוצרים המסומנים יעודכן לכמות שנספרה. מוצרים שלא צולמו יישארו כמו שהם.</div>
+    <div class="grid2" style="margin-top:10px">
+      <button class="btn primary" id="shApply" ${busy ? 'disabled' : ''}>✓ עדכן מלאי</button>
+      <button class="btn danger" id="shClear">נקה הכל</button>
+    </div>`;
+  re.oninput = re.onchange = (e) => {
+    const row = e.target.closest('[data-i]'); if (!row) return;
+    const r = shelfRows[+row.dataset.i], f = e.target.dataset.f; if (!f) return;
+    r.edited = true;
+    if (f === 'include') r.include = e.target.checked;
+    else if (f === 'name') { r.name = e.target.value; return; }
+    else if (f === 'pid') {
+      r.pid = e.target.value; const p = byId(r.pid);
+      if (p) { r.name = p.name; r.unit = p.unit; r.pack = p.pack; r.perPack = p.perPack; }
+    } else r[f] = f === 'perPack' ? Math.max(1, num(e.target.value)) : num(e.target.value);
+    if (e.type === 'change' || f === 'include') drawShelfRowsOnly();
   };
+  $('#shApply').onclick = applyShelf;
+  $('#shClear').onclick = () => { if (confirm('לנקות את כל התמונות והתוצאות?')) { shelf.photos = []; shelfRows = []; drawShelf(); } };
+}
+function drawShelfRowsOnly() { const y = window.scrollY; drawShelf(); window.scrollTo(0, y); }
+
+function applyShelf() {
+  const rows = shelfRows.filter(r => r.include && r.name.trim());
+  if (!rows.length) return toast('לא סומן אף מוצר');
+  const nNew = rows.filter(r => !byId(r.pid)).length;
+  if (!confirm(`לעדכן ${rows.length} מוצרים${nNew ? ` (מתוכם ${nNew} חדשים)` : ''}?`)) return;
+  const lines = [];
+  rows.forEach(r => {
+    let p = byId(r.pid);
+    const t = rowTotal(r);
+    if (!p) {
+      p = { id: uid(), name: r.name.trim(), barcode: '', category: r.category || '', unit: r.unit, pack: r.pack, perPack: Math.max(1, r.perPack), min: 0, qty: 0 };
+      S.products.push(p);
+    } else if (r.perPack !== p.perPack) p.perPack = Math.max(1, r.perPack);
+    lines.push({ pid: p.id, name: p.name, category: p.category, unit: p.unit, expected: p.qty, counted: t });
+    if (t !== p.qty) addMove(p, 'count', t - p.qty, 'ספירה מצילום');
+  });
+  S.counts.push({ id: uid(), ts: Date.now(), startedAt: Date.now(), lines, source: 'photo' });
+  saveState(); updateBadge();
+  shelf.photos = []; shelfRows = [];
+  toast(`המלאי עודכן (${rows.length} מוצרים)`);
+  if (nNew) setTimeout(() => toast('טיפ: הגדר "מינימום" למוצרים החדשים כדי לקבל התראות חוסר', 3500), 2300);
+  go('inventory');
 }
 
-/* scan a single code into a callback (used in product form) */
-function quickScan(onCode) {
-  const box = document.createElement('div');
-  box.innerHTML = `<div id="qreader" style="margin:10px 0"></div><button class="btn block" id="qstop">סגור מצלמה</button>`;
-  $('#sheet').prepend(box);
-  const done = async () => { await stopScanner(); box.remove(); if (tab === 'scan') startScanner('reader', handleCode); };
-  $('#qstop').onclick = done;
-  startScanner('qreader', (code) => { beep(true); onCode(code); done(); });
+/* API key setup, shown where it's needed */
+function keySetupHtml() {
+  return `<div class="card stack" style="border-color:var(--accent);margin-bottom:12px">
+    <b>🔑 הגדרה חד-פעמית: מפתח AI</b>
+    <p class="small">הספירה מתמונות נעשית על ידי Claude, ולשם כך צריך מפתח:</p>
+    <ol class="small" style="margin:0;padding-inline-start:18px">
+      <li>נכנסים ל-<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" dir="ltr">console.anthropic.com</a> ונרשמים.</li>
+      <li>בחלק של Billing מוסיפים קרדיט, למשל 5$.</li>
+      <li>לוחצים "Create Key", מעתיקים ומדביקים כאן.</li>
+    </ol>
+    <input type="password" id="kIn" dir="ltr" placeholder="sk-ant-..." autocomplete="off">
+    <button class="btn primary block" id="kSave">שמור</button>
+    <p class="small muted">המפתח נשמר רק בטלפון הזה. כל תמונה עולה בערך 5–15 סנט.</p>
+  </div>`;
+}
+function bindKeySetup(after) {
+  $('#kSave').onclick = () => {
+    const k = $('#kIn').value.trim();
+    if (!k.startsWith('sk-ant-')) return toast('המפתח צריך להתחיל ב-sk-ant-');
+    S.settings.apiKey = k; saveState(); toast('נשמר! אפשר לצלם'); after();
+  };
 }
 
 /* ================= Count (stock-take) ================= */
@@ -438,8 +592,6 @@ function renderCount() {
   }
   const d = S.countDraft;
   const done = Object.keys(d.lines).filter(id => byId(id)).length;
-  $('#topActions').innerHTML = `<button class="btn small" id="cScan">📷 סרוק</button>`;
-  $('#cScan').onclick = () => { scanMode = 'count'; go('scan'); };
   const groups = {};
   S.products.forEach(p => (groups[p.category || 'ללא קטגוריה'] ||= []).push(p));
   v.innerHTML = `
@@ -664,7 +816,7 @@ function writeXlsx(name, sheets) {
 const TYPE_HE = { in: 'קליטה', out: 'הוצאה', count: 'ספירה', edit: 'עדכון' };
 function exportAll() {
   writeXlsx('מלאי', {
-    'מלאי': S.products.map(p => ({ 'מוצר': p.name, 'קטגוריה': p.category, 'ברקוד': p.barcode, 'כמות (יחידות)': p.qty, 'כמות': fmtQty(p),
+    'מלאי': S.products.map(p => ({ 'מוצר': p.name, 'קטגוריה': p.category, 'כמות (יחידות)': p.qty, 'כמות': fmtQty(p),
       'יחידה': p.unit, 'אריזה': p.pack, 'יחידות באריזה': p.perPack, 'מינימום': p.min, 'מצב': isLow(p) ? 'נמוך' : 'תקין' })),
     'תנועות': S.moves.slice().reverse().map(m => { const p = byId(m.pid); return {
       'תאריך': new Date(m.ts).toLocaleString('he-IL'), 'מוצר': p ? p.name : '(נמחק)', 'סוג': TYPE_HE[m.type] || m.type,

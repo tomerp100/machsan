@@ -192,3 +192,13 @@ label.field > span { display: block; font-size: 14px; color: var(--muted); margi
 .moves div { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .photo-preview { width: 100%; border-radius: 12px; max-height: 240px; object-fit: contain; background: #000; }
 .notice { background: var(--warn-bg); border-radius: 12px; padding: 10px 12px; font-size: 14px; }
+
+.photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.ph { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.ph img, .ph .noimg { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--surface-2); }
+.ph .phs { font-size: 12px; padding: 4px 6px; }
+.ph.error { border-color: var(--danger); }
+.ph.error .phs { color: var(--danger); }
+.ph.busy img { opacity: .6; }
+.phx { position: absolute; top: 4px; inset-inline-start: 4px; width: 26px; height: 26px; border-radius: 13px; border: 0; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; }
+details summary { cursor: pointer; }

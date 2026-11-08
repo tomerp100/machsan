@@ -1,7 +1,7 @@
 // Offline cache for the app shell. Bump VERSION when files change.
-const VERSION = 'machsan-v1';
+const VERSION = 'machsan-v2';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
-  'vendor/html5-qrcode.min.js', 'vendor/xlsx.full.min.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
+  'vendor/xlsx.full.min.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
